@@ -21,6 +21,8 @@ import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
     QColor,
+    QFont,
+    QFontMetricsF,
     QImage,
     QPainter,
     QPainterPath,
@@ -98,6 +100,10 @@ class RadialSpectrum(VisualBase):
         self._sprites: dict[int, tuple[QPixmap, QPixmap]] = {}
         self._cover: QPixmap | None = None    # circular album cover, or None
         self._cover_fade = 0.0                # 0..1 fade-in of the cover
+        self._cover_angle = 0.0               # degrees; cover spin when enabled
+        self._title = ""                      # current song title
+        self._artist = ""                     # current artist
+        self._text_fade = 0.0                 # 0..1 fade-in of the track text
 
         # Cross-section profiles are colour independent: compute once.
         y = (np.arange(SPRITE, dtype=np.float32) + 0.5) / SPRITE * 2.0 - 1.0
@@ -113,6 +119,11 @@ class RadialSpectrum(VisualBase):
         self._cover = _circular_cover(image_bytes) if image_bytes else None
         if self._cover is None:
             self._cover_fade = 0.0
+
+    def set_track(self, title: str, artist: str) -> None:
+        """Set (or clear) the song title and artist shown below the ring."""
+        self._title = title or ""
+        self._artist = artist or ""
 
     # ================================================================ simulation
     def update(self, f: AudioFeatures, dt: float, width: float, height: float) -> None:
@@ -144,6 +155,16 @@ class RadialSpectrum(VisualBase):
         step = dt / 0.4
         self._cover_fade = min(target_fade, self._cover_fade + step) if target_fade > self._cover_fade \
             else max(target_fade, self._cover_fade - step)
+
+        # Fade the track text the same way (needs a title and the feature enabled).
+        text_target = 1.0 if (r.text_enabled and self._title) else 0.0
+        self._text_fade = min(text_target, self._text_fade + step) if text_target > self._text_fade \
+            else max(text_target, self._text_fade - step)
+
+        # Optional slow spin, a touch faster with more energy.
+        if r.cover_rotate:
+            self._cover_angle = (self._cover_angle
+                                 + dt * r.cover_rotate_speed * 360.0 * (1.0 + self.energy)) % 360.0
 
     # ================================================================ colours
     def _bar_hues(self, n: int) -> np.ndarray:
@@ -187,15 +208,22 @@ class RadialSpectrum(VisualBase):
         ring_rgb = colorsys.hsv_to_rgb(float(hues[0]), self.theme.saturation * 0.6, 1.0)
         glow_rgb = colorsys.hsv_to_rgb(float(hues[n // 2]), self.theme.saturation, 1.0)
 
-        # Album cover inside the ring (normal blend, under the additive ring/bars).
+        # Album cover inside the ring. It swells with the ring (same radius) so the
+        # two always match; the spectrum bars radiate out from the ring's edge.
         if self._cover is not None and self._cover_fade > 0.0:
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            scale = 1.0 + r.cover_beat_scale * self._pulse
-            cover_r = r0 * r.cover_fill * scale
+            cover_r = r0 * r.cover_fill   # tracks the reactive ring radius
             painter.setOpacity(r.cover_opacity * self._cover_fade)
-            painter.drawPixmap(QRectF(cx - cover_r, cy - cover_r, 2 * cover_r, 2 * cover_r),
-                               self._cover, QRectF(self._cover.rect()))
+            if r.cover_rotate:
+                painter.setTransform(
+                    QTransform().translate(cx, cy).rotate(self._cover_angle))
+                painter.drawPixmap(QRectF(-cover_r, -cover_r, 2 * cover_r, 2 * cover_r),
+                                   self._cover, QRectF(self._cover.rect()))
+                painter.resetTransform()
+            else:
+                painter.drawPixmap(QRectF(cx - cover_r, cy - cover_r, 2 * cover_r, 2 * cover_r),
+                                   self._cover, QRectF(self._cover.rect()))
             painter.setOpacity(1.0)
 
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
@@ -243,3 +271,61 @@ class RadialSpectrum(VisualBase):
         painter.resetTransform()
         painter.setOpacity(1.0)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+
+        if self._text_fade > 0.0 and self._title:
+            self._draw_track_text(painter, width, height, unit, cx, cy, r0)
+
+    # ================================================================ track text
+    def _draw_track_text(self, painter: QPainter, width: int, height: int,
+                          unit: float, cx: float, cy: float, r0: float) -> None:
+        r = self.r
+        title_px = max(10.0, unit * r.text_title_pt)
+        artist_px = max(9.0, unit * r.text_artist_pt)
+
+        title_font = QFont(painter.font())
+        title_font.setPixelSize(int(round(title_px)))
+        title_font.setWeight(QFont.Weight.DemiBold)
+        artist_font = QFont(painter.font())
+        artist_font.setPixelSize(int(round(artist_px)))
+        artist_font.setWeight(QFont.Weight.Normal)
+
+        tm, am = QFontMetricsF(title_font), QFontMetricsF(artist_font)
+        line_gap = title_px * 0.2
+        block_h = tm.height() + (am.height() + line_gap if self._artist else 0.0)
+
+        # Anchor the block a fixed distance above the screen bottom so it clears the
+        # taskbar and never follows the swelling bars off-screen. Only nudge it up if
+        # it would somehow overlap the ring (tiny screens / huge ring).
+        bottom = height - height * r.text_bottom_margin
+        top = bottom - block_h
+        ring_bottom = cy + r0 + unit * 0.02
+        if top < ring_bottom:
+            top = min(ring_bottom, height - block_h - unit * 0.01)
+
+        # Elide long names to a sensible width.
+        max_w = min(width * 0.8, unit * 2.2)
+        title = tm.elidedText(self._title, Qt.TextElideMode.ElideRight, int(max_w))
+        artist = am.elidedText(self._artist, Qt.TextElideMode.ElideRight, int(max_w)) if self._artist else ""
+
+        fg = QColor.fromRgbF(0.97, 0.98, 0.99)
+        shadow = QColor(0, 0, 0, int(160 * self._text_fade))
+        painter.setOpacity(1.0)
+
+        def line(font: QFont, text: str, y: float, alpha: float) -> float:
+            if not text:
+                return y
+            m = QFontMetricsF(font)
+            tw = m.horizontalAdvance(text)
+            x = cx - tw * 0.5
+            baseline = y + m.ascent()
+            painter.setFont(font)
+            painter.setPen(shadow)                       # soft drop shadow for legibility
+            painter.drawText(QPointF(x + 1.5, baseline + 1.5), text)
+            fg.setAlphaF(alpha)
+            painter.setPen(fg)
+            painter.drawText(QPointF(x, baseline), text)
+            return y + m.height()
+
+        y = line(title_font, title, top, r.text_opacity * self._text_fade)
+        if artist:
+            line(artist_font, artist, y + line_gap, r.text_opacity * 0.8 * self._text_fade)

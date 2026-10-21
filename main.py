@@ -61,6 +61,8 @@ class App:
         self.analyzer = FFTAnalyzer(self.cfg.fft, self.audio.sample_rate)
         self.album_theme = None
         self.album_cover = None
+        self.album_title = ""
+        self.album_artist = ""
         self.visual = self._make_visual(self.cfg.render.visual_style)
         print(f"[visual] {self.visual.name}")
         self.manager = WallpaperManager(self.cfg.wallpaper)
@@ -74,11 +76,14 @@ class App:
         # Album art
         self.album_theme = None
         self.album_track = ""
+        self.album_title = ""
+        self.album_artist = ""
         self.album_cover: bytes | None = None
         self.album = album_art.AlbumArtWatcher()
         self.album.theme_changed.connect(self._on_album_theme, Qt.ConnectionType.QueuedConnection)
         self.album.track_changed.connect(self._on_album_track, Qt.ConnectionType.QueuedConnection)
         self.album.cover_changed.connect(self._on_album_cover, Qt.ConnectionType.QueuedConnection)
+        self.album.now_playing.connect(self._on_now_playing, Qt.ConnectionType.QueuedConnection)
 
         # UI
         self.settings_window = SettingsWindow(settings, self.icon, self.status_text, album_art.AVAILABLE)
@@ -198,7 +203,9 @@ class App:
             self.album.stop()
             self.album_theme, self.album_track = None, ""
             self.album_cover = None
+            self.album_title, self.album_artist = "", ""
             self._apply_cover()
+            self._apply_track()
             self.settings_window.set_album_status("")
             self.visual.set_theme(self.settings.theme)
 
@@ -224,6 +231,18 @@ class App:
         """Push the current album cover to the radial visual (ignored by others)."""
         if isinstance(self.visual, RadialSpectrum):
             self.visual.set_cover(self.album_cover)
+
+    def _on_now_playing(self, title: str, artist: str) -> None:
+        if self.settings.album_sync:
+            self.album_title, self.album_artist = title, artist
+        else:
+            self.album_title, self.album_artist = "", ""
+        self._apply_track()
+
+    def _apply_track(self) -> None:
+        """Push the current title/artist to the radial visual (ignored by others)."""
+        if isinstance(self.visual, RadialSpectrum):
+            self.visual.set_track(self.album_title, self.album_artist)
 
     def _set_user_paused(self, paused: bool) -> None:
         self.user_paused = paused
@@ -271,6 +290,8 @@ class App:
             visual.set_theme(self.album_theme)
         if isinstance(visual, RadialSpectrum) and self.settings.album_sync and self.album_cover:
             visual.set_cover(self.album_cover)
+        if isinstance(visual, RadialSpectrum) and self.settings.album_sync and self.album_title:
+            visual.set_track(self.album_title, self.album_artist)
         return visual
 
     def _switch_visual(self, style: str) -> None:
@@ -279,6 +300,7 @@ class App:
         self.visual.hue, self.visual.time = old.hue, old.time  # seamless colours
         self.visual.beats = old.beats
         self._apply_cover()
+        self._apply_track()
         if self.window is not None:
             self.window.visual = self.visual
         print(f"[visual] {self.visual.name}")

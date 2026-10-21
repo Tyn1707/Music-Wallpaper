@@ -530,6 +530,12 @@ class SettingsWindow(QWidget):
             lambda v: self._update(beat_reaction=v / 100.0), "Calm", "Explosive")
         card.body.addWidget(self.reaction_row)
 
+        self.cover_rotate_row = ToggleRow(
+            "Rotate album cover",
+            "Radial style: slowly spin the Spotify album cover shown in the centre.",
+            lambda v: self._update(cover_rotate=v))
+        card.body.addWidget(self.cover_rotate_row)
+
         card.divider()
         seg, self.fps_buttons = self._segmented(
             [(fps, str(fps), f"{fps} frames per second") for fps in FPS_CHOICES],
@@ -580,6 +586,8 @@ class SettingsWindow(QWidget):
             b.setChecked(value == s.visual_style)
             b.blockSignals(False)
         self.particles_row.setEnabled(s.visual_style == "particles")
+        self.cover_rotate_row.set_checked(s.cover_rotate)
+        self.cover_rotate_row.setEnabled(s.visual_style == "radial")
         for name, tc in self.theme_cards.items():
             tc.blockSignals(True)
             tc.setChecked(name == s.theme)
@@ -608,6 +616,7 @@ class SettingsWindow(QWidget):
         self._settings = replace(self._settings, **changes).normalised()
         self.idle_delay_row.setEnabled(self._settings.idle_enabled)
         self.particles_row.setEnabled(self._settings.visual_style == "particles")
+        self.cover_rotate_row.setEnabled(self._settings.visual_style == "radial")
         self.settings_changed.emit(self._settings)
 
     def _reset(self) -> None:

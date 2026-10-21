@@ -99,9 +99,15 @@ class RadialConfig:
     min_brightness: float = 0.55
     beat_brighten: float = 0.25
     cover_enabled: bool = True       # show the Spotify album cover inside the ring
-    cover_fill: float = 0.92         # cover diameter as a share of the inner ring
+    cover_fill: float = 1.0          # cover diameter as a share of the (stable) inner ring
     cover_opacity: float = 0.95      # base opacity of the cover image
-    cover_beat_scale: float = 0.04   # extra cover scale on a beat (x strength)
+    cover_rotate: bool = False       # slowly spin the cover
+    cover_rotate_speed: float = 0.03 # turns/s when rotating (x energy)
+    text_enabled: bool = True        # show the song title + artist below the ring
+    text_title_pt: float = 0.022     # title font size as a fraction of min(w, h)
+    text_artist_pt: float = 0.015    # artist font size as a fraction of min(w, h)
+    text_bottom_margin: float = 0.075  # block's distance from the screen bottom (frac of height)
+    text_opacity: float = 0.9        # base opacity of the text
 
 
 @dataclass(frozen=True)

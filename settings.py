@@ -34,6 +34,7 @@ class Settings:
     visual_style: str = "liquid"
     theme: str = "dynamic"
     album_sync: bool = False
+    cover_rotate: bool = False     # radial style: spin the album cover in the centre
     max_particles: int = 1000
     beat_sensitivity: int = 50     # 0..100 in the UI; higher = more beats
     beat_reaction: float = 1.0     # multiplier for beat impulse / burst / flash
@@ -53,6 +54,7 @@ class Settings:
             visual_style=self.visual_style if self.visual_style in STYLE_CHOICES else "liquid",
             theme=self.theme if self.theme in THEMES else "dynamic",
             album_sync=bool(self.album_sync),
+            cover_rotate=bool(self.cover_rotate),
             max_particles=int(clamp(int(self.max_particles), *PARTICLE_RANGE)),
             beat_sensitivity=int(clamp(int(self.beat_sensitivity), 0, 100)),
             beat_reaction=float(clamp(float(self.beat_reaction), *REACTION_RANGE)),
@@ -89,6 +91,7 @@ class Settings:
                 base.radial,
                 beat_pulse=base.radial.beat_pulse * r,
                 beat_brighten=base.radial.beat_brighten * r,
+                cover_rotate=self.cover_rotate,
             ),
             idle=replace(base.idle, enabled=self.idle_enabled, delay=self.idle_delay),
             colors=replace(base.colors, theme=self.theme, beat_flash=base.colors.beat_flash * r),
