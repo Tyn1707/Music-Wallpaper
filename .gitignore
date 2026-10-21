@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Per-user runtime data (settings, logs)
+data/
+
+# OS / editors
+Thumbs.db
+.vscode/
+.idea/

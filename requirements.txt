@@ -1,0 +1,14 @@
+# Python 3.11 / Windows 10-11 x64
+# PyAudioWPatch = PyAudio fork with WASAPI loopback support (stock PyAudio cannot capture system audio).
+# It is imported as `pyaudiowpatch`.
+PyAudioWPatch==0.2.12.9
+numpy==2.4.6
+PyQt6==6.11.0
+pywin32==312
+
+# Spotify album-art colours (Windows media session API; no Spotify login needed)
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Media.Control==3.2.1
+winrt-Windows.Storage.Streams==3.2.1
