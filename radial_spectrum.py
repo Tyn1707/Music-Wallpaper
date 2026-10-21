@@ -18,8 +18,16 @@ import colorsys
 import math
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF
-from PyQt6.QtGui import QColor, QImage, QPainter, QPixmap, QRadialGradient, QTransform
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import (
+    QColor,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+    QRadialGradient,
+    QTransform,
+)
 
 from config import ColorConfig, IdleConfig, RadialConfig
 from fft_analyzer import AudioFeatures
@@ -29,6 +37,33 @@ HUE_STEPS = 64
 SPRITE = 32            # px across the bar (core + glow halo)
 STRIP_LEN = 4          # px along the bar; stretched to the bar length
 CORE_FRAC = 0.3        # core diameter as a share of the sprite width
+COVER_RES = 256        # px; circular cover is rendered once at this size, then scaled
+
+
+def _circular_cover(image_bytes: bytes) -> QPixmap | None:
+    """Decode album-art bytes into a circular (alpha-masked) square pixmap."""
+    img = QImage.fromData(image_bytes)
+    if img.isNull():
+        return None
+    # Centre-crop to a square, then scale to a fixed working resolution.
+    side = min(img.width(), img.height())
+    img = img.copy((img.width() - side) // 2, (img.height() - side) // 2, side, side)
+    img = img.scaled(COVER_RES, COVER_RES, Qt.AspectRatioMode.IgnoreAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation)
+
+    out = QPixmap(COVER_RES, COVER_RES)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    try:
+        p.setRenderHints(QPainter.RenderHint.Antialiasing
+                         | QPainter.RenderHint.SmoothPixmapTransform)
+        path = QPainterPath()
+        path.addEllipse(0.0, 0.0, float(COVER_RES), float(COVER_RES))
+        p.setClipPath(path)
+        p.drawImage(0, 0, img)
+    finally:
+        p.end()
+    return out
 
 
 def _profile(d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -61,6 +96,8 @@ class RadialSpectrum(VisualBase):
         self._pulse = 0.0
         self._rotation = 0.0
         self._sprites: dict[int, tuple[QPixmap, QPixmap]] = {}
+        self._cover: QPixmap | None = None    # circular album cover, or None
+        self._cover_fade = 0.0                # 0..1 fade-in of the cover
 
         # Cross-section profiles are colour independent: compute once.
         y = (np.arange(SPRITE, dtype=np.float32) + 0.5) / SPRITE * 2.0 - 1.0
@@ -70,6 +107,12 @@ class RadialSpectrum(VisualBase):
 
     def on_theme_changed(self) -> None:
         self._sprites.clear()  # sprite colours depend on theme saturation
+
+    def set_cover(self, image_bytes: bytes | None) -> None:
+        """Set (or clear) the album cover shown inside the ring."""
+        self._cover = _circular_cover(image_bytes) if image_bytes else None
+        if self._cover is None:
+            self._cover_fade = 0.0
 
     # ================================================================ simulation
     def update(self, f: AudioFeatures, dt: float, width: float, height: float) -> None:
@@ -95,6 +138,12 @@ class RadialSpectrum(VisualBase):
 
         self._pulse = max(self._pulse * math.exp(-dt / r.beat_pulse_decay), self.beat_strength)
         self._rotation = (self._rotation + dt * r.rotate_speed * (1.0 + self.energy)) % 1.0
+
+        # Fade the cover in when present, out when cleared (~0.4 s either way).
+        target_fade = 1.0 if (self._cover is not None and r.cover_enabled) else 0.0
+        step = dt / 0.4
+        self._cover_fade = min(target_fade, self._cover_fade + step) if target_fade > self._cover_fade \
+            else max(target_fade, self._cover_fade - step)
 
     # ================================================================ colours
     def _bar_hues(self, n: int) -> np.ndarray:
@@ -137,6 +186,17 @@ class RadialSpectrum(VisualBase):
         hues = self._bar_hues(n)
         ring_rgb = colorsys.hsv_to_rgb(float(hues[0]), self.theme.saturation * 0.6, 1.0)
         glow_rgb = colorsys.hsv_to_rgb(float(hues[n // 2]), self.theme.saturation, 1.0)
+
+        # Album cover inside the ring (normal blend, under the additive ring/bars).
+        if self._cover is not None and self._cover_fade > 0.0:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            scale = 1.0 + r.cover_beat_scale * self._pulse
+            cover_r = r0 * r.cover_fill * scale
+            painter.setOpacity(r.cover_opacity * self._cover_fade)
+            painter.drawPixmap(QRectF(cx - cover_r, cy - cover_r, 2 * cover_r, 2 * cover_r),
+                               self._cover, QRectF(self._cover.rect()))
+            painter.setOpacity(1.0)
 
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)

@@ -98,6 +98,10 @@ class RadialConfig:
     center_glow: float = 0.35        # background glow behind the ring at full energy
     min_brightness: float = 0.55
     beat_brighten: float = 0.25
+    cover_enabled: bool = True       # show the Spotify album cover inside the ring
+    cover_fill: float = 0.92         # cover diameter as a share of the inner ring
+    cover_opacity: float = 0.95      # base opacity of the cover image
+    cover_beat_scale: float = 0.04   # extra cover scale on a beat (x strength)
 
 
 @dataclass(frozen=True)

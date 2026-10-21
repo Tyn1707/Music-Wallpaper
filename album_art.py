@@ -100,6 +100,7 @@ class AlbumArtWatcher(QObject):
 
     theme_changed = pyqtSignal(object)
     track_changed = pyqtSignal(str)
+    cover_changed = pyqtSignal(object)   # raw image bytes, or None when no session
 
     def __init__(self, poll_interval: float = 2.0) -> None:
         super().__init__()
@@ -157,6 +158,7 @@ class AlbumArtWatcher(QObject):
             if self._had_theme:
                 self._key, self._had_theme = None, False
                 self.track_changed.emit("")
+                self.cover_changed.emit(None)
                 self.theme_changed.emit(None)
             return
 
@@ -170,6 +172,7 @@ class AlbumArtWatcher(QObject):
             return  # cover not ready yet (common right after a skip); retry next poll
         self._key, self._had_theme = key, True
         self.track_changed.emit(f"{props.artist} - {props.title}" if props.artist else props.title)
+        self.cover_changed.emit(data)
         self.theme_changed.emit(theme)
 
     @staticmethod

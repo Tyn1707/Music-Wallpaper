@@ -60,6 +60,7 @@ class App:
 
         self.analyzer = FFTAnalyzer(self.cfg.fft, self.audio.sample_rate)
         self.album_theme = None
+        self.album_cover = None
         self.visual = self._make_visual(self.cfg.render.visual_style)
         print(f"[visual] {self.visual.name}")
         self.manager = WallpaperManager(self.cfg.wallpaper)
@@ -73,9 +74,11 @@ class App:
         # Album art
         self.album_theme = None
         self.album_track = ""
+        self.album_cover: bytes | None = None
         self.album = album_art.AlbumArtWatcher()
         self.album.theme_changed.connect(self._on_album_theme, Qt.ConnectionType.QueuedConnection)
         self.album.track_changed.connect(self._on_album_track, Qt.ConnectionType.QueuedConnection)
+        self.album.cover_changed.connect(self._on_album_cover, Qt.ConnectionType.QueuedConnection)
 
         # UI
         self.settings_window = SettingsWindow(settings, self.icon, self.status_text, album_art.AVAILABLE)
@@ -194,6 +197,8 @@ class App:
         else:
             self.album.stop()
             self.album_theme, self.album_track = None, ""
+            self.album_cover = None
+            self._apply_cover()
             self.settings_window.set_album_status("")
             self.visual.set_theme(self.settings.theme)
 
@@ -210,6 +215,15 @@ class App:
         if text and self.settings.album_sync:
             self.settings_window.set_album_status(f"Now matching: {text}")
             print(f"[album] {text}")
+
+    def _on_album_cover(self, data) -> None:
+        self.album_cover = data if self.settings.album_sync else None
+        self._apply_cover()
+
+    def _apply_cover(self) -> None:
+        """Push the current album cover to the radial visual (ignored by others)."""
+        if isinstance(self.visual, RadialSpectrum):
+            self.visual.set_cover(self.album_cover)
 
     def _set_user_paused(self, paused: bool) -> None:
         self.user_paused = paused
@@ -255,6 +269,8 @@ class App:
             visual = LiquidGradient(cfg.liquid, cfg.colors, cfg.idle)
         if self.settings.album_sync and self.album_theme is not None:
             visual.set_theme(self.album_theme)
+        if isinstance(visual, RadialSpectrum) and self.settings.album_sync and self.album_cover:
+            visual.set_cover(self.album_cover)
         return visual
 
     def _switch_visual(self, style: str) -> None:
@@ -262,6 +278,7 @@ class App:
         self.visual = self._make_visual(style)
         self.visual.hue, self.visual.time = old.hue, old.time  # seamless colours
         self.visual.beats = old.beats
+        self._apply_cover()
         if self.window is not None:
             self.window.visual = self.visual
         print(f"[visual] {self.visual.name}")
