@@ -1,6 +1,6 @@
 """Music Reactive Live Wallpaper - entry point.
 
-Pipeline: AudioCapture -> FFTAnalyzer -> visual (LiquidGradient | ParticleSystem | RadialSpectrum) -> WallpaperManager
+Pipeline: AudioCapture -> FFTAnalyzer -> visual (LiquidGradient | ParticleSystem | RadialSpectrum | VinylRecord) -> WallpaperManager
 Extras:   tray icon, settings window, autostart, Spotify album-art colours
 
 Run:   python main.py [--theme neon] [--all-monitors] [--settings] [--list-themes]
@@ -31,6 +31,7 @@ from fft_analyzer import FFTAnalyzer
 from liquid_gradient import LiquidGradient
 from particle_system import ParticleSystem
 from radial_spectrum import RadialSpectrum
+from vinyl_record import VinylRecord
 from settings import APP_DIR, SETTINGS_PATH, Settings
 from settings_ui import SettingsWindow
 from themes import THEMES
@@ -173,6 +174,8 @@ class App:
             self.visual.set_max_particles(cfg.particles.max_particles)
         elif isinstance(self.visual, RadialSpectrum):
             self.visual.r = cfg.radial
+        elif isinstance(self.visual, VinylRecord):
+            self.visual.v = cfg.vinyl
         else:
             self.visual.l = cfg.liquid
         if old.visual_style != new.visual_style:
@@ -228,9 +231,8 @@ class App:
         self._apply_cover()
 
     def _apply_cover(self) -> None:
-        """Push the current album cover to the radial visual (ignored by others)."""
-        if isinstance(self.visual, RadialSpectrum):
-            self.visual.set_cover(self.album_cover)
+        """Push the current album cover to the active visual."""
+        self.visual.set_cover(self.album_cover)
 
     def _on_now_playing(self, title: str, artist: str) -> None:
         if self.settings.album_sync:
@@ -240,9 +242,8 @@ class App:
         self._apply_track()
 
     def _apply_track(self) -> None:
-        """Push the current title/artist to the radial visual (ignored by others)."""
-        if isinstance(self.visual, RadialSpectrum):
-            self.visual.set_track(self.album_title, self.album_artist)
+        """Push the current title/artist to the active visual."""
+        self.visual.set_track(self.album_title, self.album_artist)
 
     def _set_user_paused(self, paused: bool) -> None:
         self.user_paused = paused
@@ -282,15 +283,20 @@ class App:
         cfg = self.cfg
         if style == "particles":
             visual = ParticleSystem(cfg.particles, cfg.colors, cfg.idle)
+            visual.overlay = replace(cfg.overlay, cover_shape="circle")
         elif style == "radial":
             visual = RadialSpectrum(cfg.radial, cfg.colors, cfg.idle)
+            visual.overlay = cfg.overlay   # radial draws its own cover; kept for consistency
+        elif style == "vinyl":
+            visual = VinylRecord(cfg.vinyl, cfg.colors, cfg.idle)   # draws its own record + caption
         else:
             visual = LiquidGradient(cfg.liquid, cfg.colors, cfg.idle)
+            visual.overlay = replace(cfg.overlay, cover_shape="rounded_rect")
         if self.settings.album_sync and self.album_theme is not None:
             visual.set_theme(self.album_theme)
-        if isinstance(visual, RadialSpectrum) and self.settings.album_sync and self.album_cover:
+        if self.settings.album_sync and self.album_cover:
             visual.set_cover(self.album_cover)
-        if isinstance(visual, RadialSpectrum) and self.settings.album_sync and self.album_title:
+        if self.settings.album_sync and self.album_title:
             visual.set_track(self.album_title, self.album_artist)
         return visual
 

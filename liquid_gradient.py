@@ -167,22 +167,33 @@ class LiquidGradient(VisualBase):
         dpr = window.devicePixelRatio()
         w, h = int(window.width() * dpr), int(window.height() * dpr)
         gl, prog, loc = self._gl, self._program, self._locs
-        gl.glViewport(0, 0, w, h)
-        prog.bind()
-        prog.setUniformValue(loc["u_res"], float(w), float(h))
-        prog.setUniformValue(loc["u_time"], float(self.time))
-        prog.setUniformValue(loc["u_warp"], float(self.warp))
-        prog.setUniformValue(loc["u_vignette"], float(self.l.vignette))
-        prog.setUniformValue(loc["u_bg"], *map(float, self.background))
-        for i in range(BLOBS):
-            prog.setUniformValue(loc[f"u_blob{i}"], *map(float, self.blobs[i]))
-            prog.setUniformValue(loc[f"u_col{i}"], *map(float, self.colors[i]))
-        a = loc["a_pos"]
-        prog.enableAttributeArray(a)
-        prog.setAttributeArray(a, self._quad)
-        gl.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
-        prog.disableAttributeArray(a)
-        prog.release()
+
+        # One QPainter for the frame: the raw GL shader runs inside a native-painting
+        # block so Qt saves/restores its GL state, then the card is drawn on top.
+        painter = QPainter(window)
+        try:
+            painter.beginNativePainting()
+            gl.glViewport(0, 0, w, h)
+            prog.bind()
+            prog.setUniformValue(loc["u_res"], float(w), float(h))
+            prog.setUniformValue(loc["u_time"], float(self.time))
+            prog.setUniformValue(loc["u_warp"], float(self.warp))
+            prog.setUniformValue(loc["u_vignette"], float(self.l.vignette))
+            prog.setUniformValue(loc["u_bg"], *map(float, self.background))
+            for i in range(BLOBS):
+                prog.setUniformValue(loc[f"u_blob{i}"], *map(float, self.blobs[i]))
+                prog.setUniformValue(loc[f"u_col{i}"], *map(float, self.colors[i]))
+            a = loc["a_pos"]
+            prog.enableAttributeArray(a)
+            prog.setAttributeArray(a, self._quad)
+            gl.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
+            prog.disableAttributeArray(a)
+            prog.release()
+            painter.endNativePainting()
+
+            self.draw_now_playing_card(painter, window.width(), window.height(), self.overlay)
+        finally:
+            painter.end()
 
     def _init_gl(self, ctx) -> None:
         self._ctx = ctx
@@ -222,4 +233,6 @@ class LiquidGradient(VisualBase):
             g.setColorAt(0.5, QColor.fromRgbF(cr, cg, cb, 0.35))
             g.setColorAt(1.0, QColor.fromRgbF(cr, cg, cb, 0.0))
             p.fillRect(0, 0, w, h, g)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        self.draw_now_playing_card(p, w, h, self.overlay)
         p.end()

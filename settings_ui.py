@@ -510,10 +510,11 @@ class SettingsWindow(QWidget):
         card = Card("Visuals")
         seg, self.style_buttons = self._segmented(
             [("liquid", "Liquid", "Liquid gradient style"), ("particles", "Particles", "Particle style"),
-             ("radial", "Radial", "Radial spectrum style")],
+             ("radial", "Radial", "Radial spectrum style"), ("vinyl", "Vinyl", "Vinyl turntable style")],
             lambda v: self._update(visual_style=v))
         card.body.addLayout(self._labelled_row(
-            "Style", "Liquid: soft flowing colour. Particles: glowing dots. Radial: spectrum bars around a ring.",
+            "Style", "Liquid: soft flowing colour. Particles: glowing dots. Radial: spectrum bars around a ring. "
+                     "Vinyl: the album cover spins on a turntable.",
             seg))
         card.divider()
 

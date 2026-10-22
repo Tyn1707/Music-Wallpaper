@@ -111,6 +111,29 @@ class RadialConfig:
 
 
 @dataclass(frozen=True)
+class VinylConfig:
+    rpm: float = 8.0                 # record speed; a real 33 1/3 rpm is too busy for a desktop
+
+
+@dataclass(frozen=True)
+class OverlayConfig:
+    """Now-playing card (album cover + title + artist) for the liquid & particle styles.
+
+    The radial style draws its own cover inside the ring and ignores this.
+    """
+    enabled: bool = True
+    cover_shape: str = "circle"      # "circle" or "rounded_rect"; set per style
+    cover_size: float = 0.26         # cover edge length as a fraction of min(w, h)
+    corner_radius: float = 0.14      # rounded-rect corner radius as a share of the cover size
+    opacity: float = 0.95            # base opacity of the card
+    margin: float = 0.03             # distance from the screen's left/bottom edges (frac of min(w, h))
+    bottom_margin: float = 0.06      # distance from the screen bottom (frac of height; clears taskbar)
+    gap: float = 0.4                 # gap between cover and text as a share of the cover size
+    title_pt: float = 0.034          # title font size as a fraction of min(w, h)
+    artist_pt: float = 0.024         # artist font size as a fraction of min(w, h)
+
+
+@dataclass(frozen=True)
 class IdleConfig:
     enabled: bool = True
     delay: float = 3.0               # s of silence before the idle animation starts
@@ -133,7 +156,7 @@ class ColorConfig:
 
 @dataclass(frozen=True)
 class RenderConfig:
-    visual_style: str = "liquid"     # "liquid", "particles" or "radial"
+    visual_style: str = "liquid"     # "liquid", "particles", "radial" or "vinyl"
     target_fps: int = 60
     idle_fps: int = 30               # frame rate once fully idle (saves CPU/GPU)
     max_dt: float = 0.1              # clamp simulation step after stalls
@@ -155,6 +178,8 @@ class Config:
     particles: ParticleConfig = field(default_factory=ParticleConfig)
     liquid: LiquidConfig = field(default_factory=LiquidConfig)
     radial: RadialConfig = field(default_factory=RadialConfig)
+    vinyl: VinylConfig = field(default_factory=VinylConfig)
+    overlay: OverlayConfig = field(default_factory=OverlayConfig)
     idle: IdleConfig = field(default_factory=IdleConfig)
     colors: ColorConfig = field(default_factory=ColorConfig)
     render: RenderConfig = field(default_factory=RenderConfig)

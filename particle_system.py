@@ -224,6 +224,7 @@ class ParticleSystem(VisualBase):
             painter.drawPixmap(QPointF(x, y), sprite)
         painter.setOpacity(1.0)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        self.draw_now_playing_card(painter, width, height, self.overlay)
 
     def _make_sprite(self, hue_index: int, size: int) -> QPixmap:
         hue = hue_index / HUE_STEPS

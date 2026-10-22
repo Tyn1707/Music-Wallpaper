@@ -26,7 +26,7 @@ REACTION_RANGE = (0.0, 2.0)
 IDLE_DELAY_RANGE = (1.0, 30.0)
 
 
-STYLE_CHOICES = ("liquid", "particles", "radial")
+STYLE_CHOICES = ("liquid", "particles", "radial", "vinyl")
 
 
 @dataclass
