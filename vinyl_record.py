@@ -38,6 +38,13 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 SHEETS = ((-0.68, 0.04, -12.0), (-0.62, 0.08, 6.0))   # sheet music on the left: dx, dy, tilt
 TURNTABLE_SCALE = 0.8   # deck + record + tonearm size; the props keep their full-size layout
 
+# Where the empty platter sits inside turntable.png, as fractions of the image's width/height,
+# and the platter radius as a fraction of image width. Used to line our spinning record up with
+# the photo's platter. Tuned by eye against the generated image.
+DECK_PLATTER = (0.495, 0.47, 0.30)   # (centre x, centre y, radius)
+DECK_WIDE = 1.12   # horizontal stretch of the turntable photo (1.0 = square aspect from the image)
+COVER_FRAC = 0.7   # album cover (centre label) size as a fraction of the record radius
+
 NO_PEN = Qt.PenStyle.NoPen
 NO_BRUSH = Qt.BrushStyle.NoBrush
 ROUND = Qt.PenCapStyle.RoundCap
@@ -104,6 +111,9 @@ class VinylRecord(VisualBase):
         self._spares = [_asset_cover(name, seed) for name, seed in SPARE_ART]   # static art for closed cases
         self._disc = _asset_cover("Album4.jpg", None, "circle")   # CD in the open case; empty tray if missing
         self._earphones = _load_pixmap("earphones.png")   # wired earbuds resting on the open case
+        self._vinyl = _asset_cover("vinyl_disc.png", None, "circle")   # realistic grooved disc, spins
+        self._sheet = _load_pixmap("sheet_music.png")   # realistic sheet music on the left
+        self._turntable = _load_pixmap("turntable.png")   # realistic deck + empty platter photo
 
     # ================================================================ simulation
     def update(self, f: AudioFeatures, dt: float, width: float, height: float) -> None:
@@ -136,13 +146,21 @@ class VinylRecord(VisualBase):
         painter.drawPixmap(QPointF(0, 0), back)
         self._paint_cases(painter, width, height)   # per frame: their art follows the current track
         _, _, _, c, radius = self._geometry(width, height)
-        cover = self._overlay_cover("circle", 0.0)
-        if cover is not None:
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if self._vinyl is not None:                 # grooved disc photo spins beneath the label
             painter.save()
             painter.translate(c)
             painter.rotate(self._angle)
-            painter.drawPixmap(QRectF(-radius, -radius, 2 * radius, 2 * radius), cover, QRectF(cover.rect()))
+            painter.drawPixmap(QRectF(-radius, -radius, 2 * radius, 2 * radius),
+                               self._vinyl, QRectF(self._vinyl.rect()))
+            painter.restore()
+        cover = self._overlay_cover("circle", 0.0)
+        if cover is not None:
+            label = radius * COVER_FRAC             # cover sits as the centre label of the record
+            painter.save()
+            painter.translate(c)
+            painter.rotate(self._angle)
+            painter.drawPixmap(QRectF(-label, -label, 2 * label, 2 * label), cover, QRectF(cover.rect()))
             painter.restore()
         painter.drawPixmap(QPointF(0, 0), front)   # grooves/sheen stay put, like real reflections
         self._paint_caption(painter, width, height)
@@ -172,6 +190,38 @@ class VinylRecord(VisualBase):
         p.fillRect(QRectF(0, 0, w, h), spot)
         self._paint_sheets(p, min(w, h), cx, cy)
 
+        if self._turntable is not None:
+            self._paint_deck_photo(p, c, radius)
+            return
+        self._paint_deck_vector(p, u, cx, cy, c, radius)
+
+    def _paint_deck_photo(self, p: QPainter, c: QPointF, radius: float) -> None:
+        """Draw the turntable photo so its platter lines up with our spinning record.
+
+        The record (radius `radius`, centred on `c`) is drawn later on top. We scale the
+        photo so its platter height matches the record, stretch the body wider by DECK_WIDE,
+        and anchor the platter centre on `c`.
+        """
+        pix = self._turntable
+        pcx, pcy, pr = DECK_PLATTER
+        scale = radius / (pr * pix.width())              # photo px -> scene px so the platter matches
+        dw, dh = pix.width() * scale * DECK_WIDE, pix.height() * scale
+        left = c.x() - pcx * dw                          # platter centre lands on c
+        top = c.y() - pcy * dh
+        dest = QRectF(left, top, dw, dh)
+        src = QRectF(pix.rect())
+
+        shadow = self._tinted_shadow(pix)                # soft contact shadow under the whole unit
+        if shadow is not None:
+            p.setOpacity(0.33)
+            for off in (0.02 * radius, 0.012 * radius):
+                p.drawPixmap(dest.translated(off, off * 1.4), shadow, src)
+            p.setOpacity(1.0)
+        p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawPixmap(dest, pix, src)
+
+    def _paint_deck_vector(self, p: QPainter, u: float, cx: float, cy: float,
+                           c: QPointF, radius: float) -> None:
         deck = QRectF(cx - 0.40 * u, cy - 0.29 * u, 0.80 * u, 0.58 * u)
         corner = 0.02 * u
         p.setPen(NO_PEN)
@@ -231,8 +281,50 @@ class VinylRecord(VisualBase):
         p.setBrush(_metal(knob, kr))
         p.drawEllipse(knob, kr, kr)
 
+    def _paint_sheets(self, p: QPainter, u: float, cx: float, cy: float) -> None:
+        """Realistic sheet-music photos scattered on the left; vector fallback if missing."""
+        pix = self._sheet
+        if pix is None:
+            self._paint_sheets_vector(u, cx, cy, p)
+            return
+        aspect = pix.height() / pix.width() if pix.width() else 1.3
+        pw = 0.36 * u
+        ph = pw * aspect
+        src = QRectF(pix.rect())
+        shadow = self._tinted_shadow(pix)                            # paper-shaped silhouette, not a box
+        p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        for dx, dy, tilt in SHEETS:
+            p.save()
+            p.translate(cx + dx * u, cy + dy * u)
+            p.rotate(tilt)
+            dest = QRectF(-pw / 2, -ph / 2, pw, ph)
+            if shadow is not None:                                   # soft contact shadow, offset twice
+                p.setOpacity(0.35)
+                for off in (0.016 * u, 0.009 * u):
+                    p.drawPixmap(dest.translated(off, off * 1.3), shadow, src)
+            p.setOpacity(0.92)                                       # settle into the dim lamplight
+            p.drawPixmap(dest, pix, src)
+            p.setOpacity(1.0)
+            p.restore()
+
     @staticmethod
-    def _paint_sheets(p: QPainter, u: float, cx: float, cy: float) -> None:
+    def _tinted_shadow(pix: QPixmap) -> QPixmap | None:
+        """A black copy of `pix` keeping its alpha, used as a shape-matched drop shadow."""
+        if pix.isNull():
+            return None
+        shadow = QPixmap(pix.size())
+        shadow.fill(Qt.GlobalColor.transparent)
+        p = QPainter(shadow)
+        try:
+            p.drawPixmap(0, 0, pix)
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            p.fillRect(shadow.rect(), QColor(0, 0, 0))
+        finally:
+            p.end()
+        return shadow
+
+    @staticmethod
+    def _paint_sheets_vector(u: float, cx: float, cy: float, p: QPainter) -> None:
         rng = random.Random(3)                                        # fixed seed: same notes every rebuild
         pw, ph = 0.36 * u, 0.5 * u
         for dx, dy, tilt in SHEETS:
@@ -339,39 +431,18 @@ class VinylRecord(VisualBase):
     # ---------------------------------------------------------------- front layer
     def _paint_front(self, p: QPainter, w: int, h: int) -> None:
         u, cx, cy, c, radius = self._geometry(w, h)
-        label = radius * 0.34
+        label = radius * COVER_FRAC
 
-        p.setPen(NO_PEN)                                              # vinyl darkening towards the rim
-        shade = QRadialGradient(c, radius)                            # glossy picture-disc tint, darker at the rim
-        shade.setColorAt(0.0, QColor(0, 0, 0, 30))
-        shade.setColorAt(0.85, QColor(0, 0, 0, 55))
-        shade.setColorAt(1.0, QColor(0, 0, 0, 140))
-        p.setBrush(shade)
-        p.drawEllipse(c, radius, radius)
-
-        rng = random.Random(5)                                        # fixed seed: same pressing every rebuild
-        g_in, g_out = radius * 0.40, radius * 0.975
-        gaps = sorted(rng.uniform(g_in * 1.2, g_out * 0.95) for _ in range(4))   # silent bands between tracks
-        gap_w = radius * 0.007
-
-        p.setPen(QPen(QColor(0, 0, 0, 45), g_in - label))             # smooth run-out (dead wax) band
-        p.setBrush(NO_BRUSH)
-        p.drawEllipse(c, (label + g_in) / 2, (label + g_in) / 2)
-
-        step = max(1.5, radius / 140.0)                               # grooves, uneven like real cutting
-        r = g_in
-        while r < g_out:
-            if not any(abs(r - g) < gap_w for g in gaps):
-                lit = rng.random() < 0.12
-                p.setPen(QPen(QColor(255, 240, 220, rng.randint(4, 10)) if lit
-                              else QColor(0, 0, 0, rng.randint(14, 46)), 1.0))
-                p.drawEllipse(c, r, r)
-            r += step
-        for g in gaps:                                                # track gaps: glossy dark ring + lit edge
-            p.setPen(QPen(QColor(0, 0, 0, 75), gap_w * 1.6))
-            p.drawEllipse(c, g, g)
-            p.setPen(QPen(QColor(255, 235, 210, 22), 1.0))
-            p.drawEllipse(c, g - gap_w, g - gap_w)
+        # The grooves themselves come from the spinning photo drawn in render(); this fixed
+        # layer only adds lighting that should stay put, like real reflections on the disc.
+        if self._vinyl is None:                                      # fallback tint only when no photo
+            p.setPen(NO_PEN)
+            shade = QRadialGradient(c, radius)
+            shade.setColorAt(0.0, QColor(0, 0, 0, 30))
+            shade.setColorAt(0.85, QColor(0, 0, 0, 55))
+            shade.setColorAt(1.0, QColor(0, 0, 0, 140))
+            p.setBrush(shade)
+            p.drawEllipse(c, radius, radius)
 
         sheen = QConicalGradient(c, 35.0)                             # anisotropic "butterfly" highlight
         for pos, a in ((0.0, 0), (0.025, 18), (0.055, 78), (0.085, 18), (0.12, 0),
@@ -407,7 +478,7 @@ class VinylRecord(VisualBase):
         p.setBrush(_metal(c, sp))
         p.drawEllipse(c, sp, sp)
 
-        self._paint_tonearm(p, u, cx, cy)
+        self._paint_tonearm(p, u, cx, cy)   # stylus on top of the disc (deck photo has no arm)
 
     @staticmethod
     def _paint_tonearm(p: QPainter, u: float, cx: float, cy: float) -> None:

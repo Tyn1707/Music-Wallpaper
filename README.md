@@ -9,14 +9,16 @@ A music-reactive live wallpaper for Windows 10/11. It listens to whatever your P
 | **Liquid** | Soft flowing colour blobs (GPU shader) | Bass swells the blobs, mids speed up the flow, highs add warp |
 | **Particles** | Glowing particles bursting from the centre | Bass launches and enlarges them, beats send shockwaves, highs twinkle |
 | **Radial** | Glowing spectrum bars around a pulsing ring | Each bar is a frequency band; bass and beats pulse the ring |
+| **Vinyl** | The album cover spins as a record on a wooden turntable | Steady-speed record (not audio-reactive by design); shows the now-playing caption |
 
-All styles share the colour themes (`dynamic`, `neon`, `sunset`, `ocean`, `aurora`, `ice`) and fall back to a slow breathing idle animation when nothing is playing.
+The Liquid, Particles and Radial styles share the colour themes (`dynamic`, `neon`, `sunset`, `ocean`, `aurora`, `ice`) and fall back to a slow breathing idle animation when nothing is playing.
 
 ## Features
 
 - Renders behind the desktop icons; your normal wallpaper comes back on exit
 - Beat detection with live BPM estimate
 - Optional colours from the current Spotify album cover (no login, uses the Windows media session)
+- Now-playing overlay: the album cover and song title/artist on the Liquid, Particles and Radial styles (the Vinyl style spins the cover as a record)
 - Tray icon with quick theme switch, pause and settings window
 - Pauses automatically behind fullscreen or maximised apps
 - Drops to 30 fps when idle
@@ -63,8 +65,8 @@ Every internal tunable (FFT bands, beat detection, per-style motion, colours, id
 ## How it works
 
 ```
-AudioCapture -> FFTAnalyzer -> Visual (Liquid | Particles | Radial) -> WallpaperWindow
- (WASAPI)      (bands, beats,     (VisualBase subclass)                (embedded behind icons)
+AudioCapture -> FFTAnalyzer -> Visual (Liquid | Particles | Radial | Vinyl) -> WallpaperWindow
+ (WASAPI)      (bands, beats,     (VisualBase subclass)                        (embedded behind icons)
                spectrum)
 ```
 
@@ -73,10 +75,11 @@ AudioCapture -> FFTAnalyzer -> Visual (Liquid | Particles | Radial) -> Wallpaper
 | `main.py` | Entry point, frame loop, wiring |
 | `audio_capture.py` | System audio capture (WASAPI loopback) |
 | `fft_analyzer.py` | Band levels, adaptive gain, beat/BPM detection, spectrum |
-| `visual_base.py` | Shared theme, idle and beat state for all styles |
+| `visual_base.py` | Shared theme, idle, beat state and now-playing overlay for all styles |
 | `liquid_gradient.py` | Liquid style (GLSL shader) |
 | `particle_system.py` | Particle style (NumPy simulation) |
 | `radial_spectrum.py` | Radial spectrum style |
+| `vinyl_record.py` | Vinyl turntable style (spinning album cover) |
 | `wallpaper_manager.py` | Embeds the window behind the desktop icons |
 | `themes.py` | Colour themes |
 | `album_art.py` | Spotify album-art colour extraction |
