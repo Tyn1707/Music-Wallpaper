@@ -6,10 +6,10 @@ A music-reactive live wallpaper for Windows 10/11. It listens to whatever your P
 
 | Style | Look | Reacts to |
 |---|---|---|
-| **Liquid** | Soft flowing colour blobs (GPU shader) | Bass swells the blobs, mids speed up the flow, highs add warp |
+| **Liquid** | Soft flowing colour blobs (GPU shader) over the blurred album cover | Bass swells the blobs, mids speed up the flow, highs add warp |
 | **Particles** | Glowing particles bursting from the centre | Bass launches and enlarges them, beats send shockwaves, highs twinkle |
-| **Radial** | Glowing spectrum bars around a pulsing ring | Each bar is a frequency band; bass and beats pulse the ring |
-| **Vinyl** | The album cover spins as a record on a wooden turntable | Steady-speed record (not audio-reactive by design); shows the now-playing caption |
+| **Radial** | Glowing spectrum bars around a pulsing ring, over the blurred album cover | Each bar is a frequency band; bass and beats pulse the ring and brighten the background |
+| **Vinyl** | The album cover spins on a record on a photo-real turntable, with a tonearm, CD cases, earphones and sheet music around it | Steady-speed record (not audio-reactive by design); shows the now-playing caption |
 
 The Liquid, Particles and Radial styles share the colour themes (`dynamic`, `neon`, `sunset`, `ocean`, `aurora`, `ice`) and fall back to a slow breathing idle animation when nothing is playing.
 
@@ -19,6 +19,7 @@ The Liquid, Particles and Radial styles share the colour themes (`dynamic`, `neo
 - Beat detection with live BPM estimate
 - Optional colours from the current Spotify album cover (no login, uses the Windows media session)
 - Now-playing overlay: the album cover and song title/artist on the Liquid, Particles and Radial styles (the Vinyl style spins the cover as a record)
+- Blurred, slowly drifting album cover as the background of the Liquid and Radial styles
 - Tray icon with quick theme switch, pause and settings window
 - Pauses automatically behind fullscreen or maximised apps
 - Drops to 30 fps when idle
@@ -31,17 +32,57 @@ The Liquid, Particles and Radial styles share the colour themes (`dynamic`, `neo
 - Python 3.11
 - A GPU with OpenGL 2.0 (the Liquid style falls back to a CPU renderer if shaders are unavailable)
 
-## Installation
+## Getting started
 
-```powershell
-git clone https://github.com/Tyn1707/Music-Wallpaper.git
-cd Music-Wallpaper
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
+Run these commands in PowerShell.
 
-The `winrt-*` packages are only needed for Spotify album-art colours; the app runs without them.
+1. **Install Python 3.11** from [python.org](https://www.python.org/downloads/) and tick *Add python.exe to PATH* during setup. Check it:
+
+   ```powershell
+   python --version   # should print Python 3.11.x
+   ```
+
+2. **Download the project:**
+
+   ```powershell
+   git clone https://github.com/Tyn1707/Music-Wallpaper.git
+   cd Music-Wallpaper
+   ```
+
+   No Git? Use *Code > Download ZIP* on GitHub, unzip it and `cd` into the folder.
+
+3. **Create a virtual environment and activate it:**
+
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+   ```
+
+   If PowerShell says running scripts is disabled, allow it for your user once and activate again:
+
+   ```powershell
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+   ```
+
+   Your prompt now starts with `(.venv)`.
+
+4. **Install the dependencies:**
+
+   ```powershell
+   pip install -r requirements.txt
+   ```
+
+   The `winrt-*` packages are only needed for album-art colours and covers; the app runs without them.
+
+5. **Run it:**
+
+   ```powershell
+   python main.py
+   ```
+
+   Play some music. The wallpaper appears behind your desktop icons and the settings window opens on the first run.
+
+Next time, open PowerShell in the project folder and run only steps 3 (activate) and 5.
 
 ## Usage
 
