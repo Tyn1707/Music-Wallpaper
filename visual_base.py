@@ -19,6 +19,7 @@ from PyQt6.QtGui import (
     QPainter,
     QPainterPath,
     QPixmap,
+    QRadialGradient,
 )
 
 from config import ColorConfig, IdleConfig, OverlayConfig
@@ -27,6 +28,39 @@ from themes import Theme, get_theme
 
 BAND_PHASES = np.array([0.0, 2.1, 4.2], dtype=np.float32)  # idle breathing offsets per band
 _COVER_RES = 256   # px; the overlay cover is built once at this size, then scaled
+BACKDROP_RES = 256  # px; blurred cover background, upscaled smoothly to the screen
+BACKDROP_BLUR = 4   # box radius in backdrop px (x3 passes): soft, but the cover's shapes still read
+BACKDROP_DIM = 0.58  # backdrop brightness at silence; bass and beats lift it a little
+
+
+def _box_blur(a: np.ndarray, r: int, axis: int) -> np.ndarray:
+    """Mean over a 2r+1 window along `axis`, edges clamped (cumulative-sum trick)."""
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (r + 1, r)
+    c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis)
+    n = a.shape[axis]
+    return (np.take(c, range(2 * r + 1, 2 * r + 1 + n), axis) - np.take(c, range(n), axis)) / (2 * r + 1)
+
+
+def build_backdrop(image_bytes: bytes) -> QImage | None:
+    """Album art as a small, heavily blurred square image for the full-screen background."""
+    img = QImage.fromData(image_bytes)
+    if img.isNull():
+        return None
+    side = min(img.width(), img.height())
+    img = img.copy((img.width() - side) // 2, (img.height() - side) // 2, side, side)
+    img = img.scaled(BACKDROP_RES, BACKDROP_RES, Qt.AspectRatioMode.IgnoreAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation).convertToFormat(QImage.Format.Format_RGBA8888)
+    ptr = img.constBits()
+    ptr.setsize(img.sizeInBytes())
+    a = np.frombuffer(ptr, np.uint8).reshape(BACKDROP_RES, img.bytesPerLine() // 4, 4)
+    a = a[:, :BACKDROP_RES, :3].astype(np.float32)
+    for _ in range(3):                           # three box passes ~ a Gaussian blur
+        a = _box_blur(_box_blur(a, BACKDROP_BLUR, 0), BACKDROP_BLUR, 1)
+    out = np.full((BACKDROP_RES, BACKDROP_RES, 4), 255, np.uint8)
+    out[..., :3] = np.clip(a, 0, 255)
+    return QImage(out.tobytes(), BACKDROP_RES, BACKDROP_RES, 4 * BACKDROP_RES,
+                  QImage.Format.Format_RGBA8888).copy()   # copy: own the pixel buffer
 
 
 def build_cover(image_bytes: bytes, shape: str, corner_frac: float) -> QPixmap | None:
@@ -87,6 +121,13 @@ class VisualBase:
         self._np_fade = 0.0                        # 0..1 fade-in of the whole card
         self.overlay = OverlayConfig()             # set per-style by main.py
 
+        # Blurred album cover filling the screen (radial, liquid). Kept after a clear so it can fade out.
+        self._backdrop: QImage | None = None
+        self._backdrop_pix: QPixmap | None = None  # built lazily for QPainter styles
+        self._backdrop_on = False
+        self._backdrop_fade = 0.0
+        self._backdrop_id = 0                      # bumps on every new cover; GL styles re-upload
+
     # ------------------------------------------------------------------ theme
     def set_theme(self, theme: Theme | str) -> None:
         self.theme = get_theme(theme) if isinstance(theme, str) else theme
@@ -126,6 +167,9 @@ class VisualBase:
         step = dt / 0.4
         self._np_fade = (min(target, self._np_fade + step) if target > self._np_fade
                          else max(target, self._np_fade - step))
+        step = dt / 0.8
+        self._backdrop_fade = (min(1.0, self._backdrop_fade + step) if self._backdrop_on
+                               else max(0.0, self._backdrop_fade - step))
 
     # ------------------------------------------------------------------ now playing
     def set_cover(self, image_bytes: bytes | None) -> None:
@@ -133,6 +177,46 @@ class VisualBase:
         self._np_bytes = image_bytes or None
         self._np_cover = None          # rebuilt lazily for the current shape
         self._np_shape = ""
+        art = build_backdrop(image_bytes) if image_bytes else None
+        self._backdrop_on = art is not None
+        if art is not None:
+            self._backdrop, self._backdrop_pix = art, None
+            self._backdrop_id += 1
+
+    def backdrop_view(self, width: float, height: float) -> tuple[float, float, float, float]:
+        """Slow zoom + drift crop of the square backdrop: (scale x, scale y, offset x, offset y)."""
+        aspect = width / max(height, 1.0)
+        zoom = 1.12 + 0.03 * math.sin(self.time * 0.07)
+        sx, sy = (1.0, 1.0 / aspect) if aspect >= 1.0 else (aspect, 1.0)   # cover-fit the screen
+        return sx / zoom, sy / zoom, 0.03 * math.sin(self.time * 0.05), 0.025 * math.cos(self.time * 0.043)
+
+    def backdrop_dim(self) -> float:
+        """Backdrop brightness: dim enough for the visuals to read, breathing with the bass."""
+        return BACKDROP_DIM + 0.12 * float(self.levels[0]) + 0.08 * self.flash
+
+    def draw_backdrop(self, painter: QPainter, width: int, height: int) -> None:
+        """QPainter version of the blurred cover background (no-op without a cover)."""
+        if self._backdrop is None or self._backdrop_fade <= 0.0:
+            return
+        if self._backdrop_pix is None:
+            self._backdrop_pix = QPixmap.fromImage(self._backdrop)
+        sx, sy, ox, oy = self.backdrop_view(width, height)
+        s = self._backdrop.width()
+        src = QRectF((0.5 + ox - sx / 2) * s, (0.5 + oy - sy / 2) * s, sx * s, sy * s)
+        screen = QRectF(0, 0, width, height)
+        fade = self._backdrop_fade
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setOpacity(fade)
+        painter.drawPixmap(screen, self._backdrop_pix, src)
+        painter.setOpacity(fade * (1.0 - self.backdrop_dim()))
+        painter.fillRect(screen, QColor(0, 0, 0))
+        vignette = QRadialGradient(QPointF(width / 2, height / 2), math.hypot(width, height) / 2)
+        vignette.setColorAt(0.4, QColor(0, 0, 0, 0))
+        vignette.setColorAt(1.0, QColor(0, 0, 0, 130))
+        painter.setOpacity(fade)
+        painter.fillRect(screen, vignette)
+        painter.setOpacity(1.0)
 
     def set_track(self, title: str, artist: str) -> None:
         """Set (or clear) the song title and artist shown by the overlay."""

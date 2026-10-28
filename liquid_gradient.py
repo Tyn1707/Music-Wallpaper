@@ -21,7 +21,8 @@ import math
 from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QColor, QPainter, QRadialGradient, QVector2D
 from PyQt6.QtOpenGL import (
-    QOpenGLShader, QOpenGLShaderProgram, QOpenGLVersionFunctionsFactory, QOpenGLVersionProfile,
+    QOpenGLShader, QOpenGLShaderProgram, QOpenGLTexture, QOpenGLVersionFunctionsFactory,
+    QOpenGLVersionProfile,
 )
 
 from config import ColorConfig, IdleConfig, LiquidConfig
@@ -63,6 +64,10 @@ uniform float u_vignette;
 uniform vec3  u_bg;
 uniform vec3  u_blob[6];   // x, y (aspect-corrected), radius
 uniform vec3  u_col[6];    // linear-ish rgb
+uniform sampler2D u_tex;   // blurred album cover (unit 0)
+uniform float u_tex_mix;   // 0 = no cover, 1 = cover fully faded in
+uniform vec4  u_tex_xf;    // cover crop: scale xy, offset zw (texture units)
+uniform float u_tex_dim;   // cover brightness
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
@@ -89,6 +94,15 @@ void main() {
     vec3 mixcol = acc / max(wsum, 1e-4);         // smooth colour blend between blobs
     float cover = 1.0 - exp(-wsum * 1.8);        // colour vs. background
     vec3 c = mix(u_bg, mixcol, cover);
+
+    if (u_tex_mix > 0.0) {
+        // The cover ripples gently with the blob flow; the blobs become soft pools of light on it.
+        vec2 tuv = (vec2(v_uv.x, 1.0 - v_uv.y) - 0.5) * u_tex_xf.xy + 0.5 + u_tex_xf.zw;
+        tuv += vec2((q.x - p.x) / aspect, q.y - p.y) * u_tex_xf.xy * 0.25;
+        vec3 art = texture2D(u_tex, tuv).rgb * u_tex_dim;
+        vec3 lit = 1.0 - (1.0 - art) * (1.0 - mixcol * cover * 0.22);   // screen blend
+        c = mix(c, lit, u_tex_mix);
+    }
 
     vec2 v = v_uv - 0.5;                         // calm, darker edges
     c *= 1.0 - u_vignette * dot(v, v) * 1.8;
@@ -119,6 +133,8 @@ class LiquidGradient(VisualBase):
         self._ctx = None
         self._shader_failed = False
         self._locs: dict[str, int] = {}
+        self._tex: QOpenGLTexture | None = None   # blurred cover on the GPU
+        self._tex_id = -1                         # _backdrop_id the texture was built from
         self._quad = [QVector2D(-1, -1), QVector2D(1, -1), QVector2D(-1, 1), QVector2D(1, 1)]
 
     # ================================================================ simulation
@@ -183,11 +199,20 @@ class LiquidGradient(VisualBase):
             for i in range(BLOBS):
                 prog.setUniformValue(loc[f"u_blob{i}"], *map(float, self.blobs[i]))
                 prog.setUniformValue(loc[f"u_col{i}"], *map(float, self.colors[i]))
+            tex = self._cover_texture()
+            mix = self._backdrop_fade if tex is not None else 0.0
+            prog.setUniformValue(loc["u_tex_mix"], float(mix))
+            if mix > 0.0:
+                tex.bind(0)                    # u_tex defaults to unit 0
+                prog.setUniformValue(loc["u_tex_xf"], *self.backdrop_view(w, h))
+                prog.setUniformValue(loc["u_tex_dim"], float(self.backdrop_dim()))
             a = loc["a_pos"]
             prog.enableAttributeArray(a)
             prog.setAttributeArray(a, self._quad)
             gl.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
             prog.disableAttributeArray(a)
+            if mix > 0.0:
+                tex.release()
             prog.release()
             painter.endNativePainting()
 
@@ -195,9 +220,23 @@ class LiquidGradient(VisualBase):
         finally:
             painter.end()
 
+    def _cover_texture(self) -> QOpenGLTexture | None:
+        """GPU copy of the blurred cover, re-uploaded when the cover changes (context is current)."""
+        if self._backdrop is None:
+            return None
+        if self._tex is None or self._tex_id != self._backdrop_id:
+            if self._tex is not None:
+                self._tex.destroy()
+            tex = QOpenGLTexture(self._backdrop, QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps)
+            tex.setMinMagFilters(QOpenGLTexture.Filter.Linear, QOpenGLTexture.Filter.Linear)
+            tex.setWrapMode(QOpenGLTexture.WrapMode.MirroredRepeat)   # warp past the edge stays seamless
+            self._tex, self._tex_id = tex, self._backdrop_id
+        return self._tex
+
     def _init_gl(self, ctx) -> None:
         self._ctx = ctx
         self._program = None
+        self._tex = None                  # belonged to the old context
         if self._shader_failed:
             return
         profile = QOpenGLVersionProfile()
@@ -212,7 +251,8 @@ class LiquidGradient(VisualBase):
             print(f"[liquid] shader unavailable, using fallback renderer: {prog.log().strip()}")
             self._shader_failed = True
             return
-        locs = {n: prog.uniformLocation(n) for n in ("u_res", "u_time", "u_warp", "u_vignette", "u_bg")}
+        locs = {n: prog.uniformLocation(n) for n in ("u_res", "u_time", "u_warp", "u_vignette", "u_bg",
+                                                      "u_tex_mix", "u_tex_xf", "u_tex_dim")}
         for i in range(BLOBS):
             locs[f"u_blob{i}"] = prog.uniformLocation(f"u_blob[{i}]")
             locs[f"u_col{i}"] = prog.uniformLocation(f"u_col[{i}]")
@@ -225,12 +265,14 @@ class LiquidGradient(VisualBase):
         w, h = window.width(), window.height()
         p = QPainter(window)
         p.fillRect(0, 0, w, h, QColor.fromRgbF(*self.background))
+        self.draw_backdrop(p, w, h)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+        k = 1.0 - 0.75 * self._backdrop_fade      # softer blobs so the cover stays visible
         for (x, y, r), (cr, cg, cb) in zip(self.blobs, self.colors):
             cx, cy, rad = x / self._aspect * w, y * h, r * h * 1.6
             g = QRadialGradient(QPointF(cx, cy), rad)
-            g.setColorAt(0.0, QColor.fromRgbF(cr, cg, cb, 0.9))
-            g.setColorAt(0.5, QColor.fromRgbF(cr, cg, cb, 0.35))
+            g.setColorAt(0.0, QColor.fromRgbF(cr, cg, cb, 0.9 * k))
+            g.setColorAt(0.5, QColor.fromRgbF(cr, cg, cb, 0.35 * k))
             g.setColorAt(1.0, QColor.fromRgbF(cr, cg, cb, 0.0))
             p.fillRect(0, 0, w, h, g)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)

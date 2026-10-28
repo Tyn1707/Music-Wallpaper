@@ -36,14 +36,17 @@ CASES = ((0.52, -0.335, 0.235, 14.0), (0.64, -0.02, 0.23, 8.0), (0.635, 0.265, 0
 SPARE_ART = (("Album1.jpg", 11), ("Album2.jpg", 29), ("Album3.jpg", 47))   # file, fallback seed
 ASSETS = Path(__file__).resolve().parent / "assets"
 SHEETS = ((-0.68, 0.04, -12.0), (-0.62, 0.08, 6.0))   # sheet music on the left: dx, dy, tilt
-TURNTABLE_SCALE = 0.8   # deck + record + tonearm size; the props keep their full-size layout
+TURNTABLE_SCALE = 0.62   # deck + record + tonearm size; the props keep their full-size layout
 
 # Where the empty platter sits inside turntable.png, as fractions of the image's width/height,
 # and the platter radius as a fraction of image width. Used to line our spinning record up with
 # the photo's platter. Tuned by eye against the generated image.
-DECK_PLATTER = (0.495, 0.47, 0.30)   # (centre x, centre y, radius)
-DECK_WIDE = 1.12   # horizontal stretch of the turntable photo (1.0 = square aspect from the image)
-COVER_FRAC = 0.7   # album cover (centre label) size as a fraction of the record radius
+DECK_PLATTER = (0.313, 0.484, 0.205)   # (centre x, centre y, radius)
+COVER_FRAC = 0.8   # album cover (centre label) size as a fraction of the record radius
+# tonearm.png: pivot and stylus tip as fractions of the image, and where they go in the scene,
+# as offsets from the record centre in record radii. The photo is scaled/rotated to fit both.
+ARM_IMAGE = ((0.674, 0.254), (0.135, 0.903))   # (pivot, tip)
+ARM_SCENE = ((1.6, -0.86), (0.85, 0.42))       # (pivot, tip) -> tip at 0.95 r, in the groove band
 
 NO_PEN = Qt.PenStyle.NoPen
 NO_BRUSH = Qt.BrushStyle.NoBrush
@@ -114,6 +117,7 @@ class VinylRecord(VisualBase):
         self._vinyl = _asset_cover("vinyl_disc.png", None, "circle")   # realistic grooved disc, spins
         self._sheet = _load_pixmap("sheet_music.png")   # realistic sheet music on the left
         self._turntable = _load_pixmap("turntable.png")   # realistic deck + empty platter photo
+        self._tonearm = _load_pixmap("tonearm.png")       # stylus photo, drawn above the disc
 
     # ================================================================ simulation
     def update(self, f: AudioFeatures, dt: float, width: float, height: float) -> None:
@@ -133,7 +137,9 @@ class VinylRecord(VisualBase):
         """Turntable unit, deck centre x/y, record centre, record radius (proportions of the mockup)."""
         u = min(w, h) * TURNTABLE_SCALE
         cx, cy = w * 0.5, h * 0.49
-        return u, cx, cy, QPointF(cx - 0.075 * u, cy - 0.01 * u), 0.265 * u
+        radius = 0.265 * u
+        # Platter sits left of centre in the deck photo; shift so the whole deck is centred.
+        return u, cx, cy, QPointF(cx + (DECK_PLATTER[0] - 0.5) * radius / DECK_PLATTER[2], cy), radius
 
     def render(self, painter: QPainter, width: int, height: int) -> None:
         dpr = painter.device().devicePixelRatioF()
@@ -199,16 +205,13 @@ class VinylRecord(VisualBase):
         """Draw the turntable photo so its platter lines up with our spinning record.
 
         The record (radius `radius`, centred on `c`) is drawn later on top. We scale the
-        photo so its platter height matches the record, stretch the body wider by DECK_WIDE,
-        and anchor the platter centre on `c`.
+        photo so its platter matches the record and anchor the platter centre on `c`.
         """
         pix = self._turntable
         pcx, pcy, pr = DECK_PLATTER
         scale = radius / (pr * pix.width())              # photo px -> scene px so the platter matches
-        dw, dh = pix.width() * scale * DECK_WIDE, pix.height() * scale
-        left = c.x() - pcx * dw                          # platter centre lands on c
-        top = c.y() - pcy * dh
-        dest = QRectF(left, top, dw, dh)
+        dw, dh = pix.width() * scale, pix.height() * scale
+        dest = QRectF(c.x() - pcx * dw, c.y() - pcy * dh, dw, dh)   # platter centre lands on c
         src = QRectF(pix.rect())
 
         shadow = self._tinted_shadow(pix)                # soft contact shadow under the whole unit
@@ -478,7 +481,35 @@ class VinylRecord(VisualBase):
         p.setBrush(_metal(c, sp))
         p.drawEllipse(c, sp, sp)
 
-        self._paint_tonearm(p, u, cx, cy)   # stylus on top of the disc (deck photo has no arm)
+        if self._tonearm is not None:       # stylus on top of the disc (deck photo has no arm)
+            self._paint_tonearm_photo(p, c, radius)
+        else:
+            self._paint_tonearm(p, u, cx, cy)
+
+    def _paint_tonearm_photo(self, p: QPainter, c: QPointF, radius: float) -> None:
+        """Scale and rotate the tonearm photo so its pivot and stylus tip land on ARM_SCENE."""
+        pix = self._tonearm
+        (ipx, ipy), (itx, ity) = ARM_IMAGE
+        (spx, spy), (stx, sty) = ARM_SCENE
+        img_vec = QPointF((itx - ipx) * pix.width(), (ity - ipy) * pix.height())
+        scn_vec = QPointF((stx - spx) * radius, (sty - spy) * radius)
+        scale = math.hypot(scn_vec.x(), scn_vec.y()) / math.hypot(img_vec.x(), img_vec.y())
+        turn = math.degrees(math.atan2(scn_vec.y(), scn_vec.x()) - math.atan2(img_vec.y(), img_vec.x()))
+        # Image rect positioned so the pivot is at the origin; rotation happens about the pivot.
+        dest = QRectF(-ipx * pix.width() * scale, -ipy * pix.height() * scale,
+                      pix.width() * scale, pix.height() * scale)
+        src = QRectF(pix.rect())
+        shadow = self._tinted_shadow(pix)
+        p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        p.save()
+        p.translate(c + QPointF(spx * radius, spy * radius))
+        p.rotate(turn)
+        if shadow is not None:                      # shadow falls across the record below
+            p.setOpacity(0.4)
+            p.drawPixmap(dest.translated(0.05 * radius, 0.07 * radius), shadow, src)
+            p.setOpacity(1.0)
+        p.drawPixmap(dest, pix, src)
+        p.restore()
 
     @staticmethod
     def _paint_tonearm(p: QPainter, u: float, cx: float, cy: float) -> None:

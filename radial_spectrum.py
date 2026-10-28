@@ -115,7 +115,8 @@ class RadialSpectrum(VisualBase):
         self._sprites.clear()  # sprite colours depend on theme saturation
 
     def set_cover(self, image_bytes: bytes | None) -> None:
-        """Set (or clear) the album cover shown inside the ring."""
+        """Set (or clear) the album cover shown inside the ring and as the blurred background."""
+        super().set_cover(image_bytes)
         self._cover = _circular_cover(image_bytes) if image_bytes else None
         if self._cover is None:
             self._cover_fade = 0.0
@@ -196,6 +197,7 @@ class RadialSpectrum(VisualBase):
         r = self.r
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         painter.fillRect(0, 0, width, height, QColor.fromRgbF(*self.background_rgb()))
+        self.draw_backdrop(painter, width, height)
         n = self.bars.size
         if n == 0:
             return
